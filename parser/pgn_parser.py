@@ -9,13 +9,24 @@ from pathlib import Path
 import chess, chess.pgn
 import numpy as np
 import numpy.typing as npt
+from enum import IntEnum
 
-### variable list:
+### variable list (all averages):
 ###     [#GAMES, moves near king, moves toward king, moves past half rank, amt pawns past half rank, 
 ###      amt pieces left on board by eog, amt pawns left on board by eog, # king moves
 ###      length of game]
-NUM_VARS: int = 7
 ### Eventually: enum type for all the different variables
+class Vars_idx(IntEnum):
+    NUM_GAME = 0
+    LEN_GAME = 1
+    NEAR_KING = 2
+    TO_KING = 3
+    PIECE_PASTHF = 4
+    PAWN_PASTHF = 5
+    NUMPIECE_EOG = 6
+    NUMPAWN_EOG = 7
+    KING_MOVE = 8
+NUM_VARS: int = len(Vars_idx)
 
 def extract_pgns(data_dir):
     """
@@ -104,7 +115,7 @@ if __name__ == "__main__":
         pgn = open("./twic_datasets/twic16" + str(pgn_idx) + ".pgn")
         game = chess.pgn.read_game(pgn)
         game_idx = 0
-        while ((game != None) and (game_idx < 15)):
+        while ((game != None) and (game_idx < 100)):
             print(f"curr game idx: {game_idx}")
             board = game.board()
             wking_square, bking_square = chess.E1, chess.E8
@@ -115,16 +126,24 @@ if __name__ == "__main__":
             if (',' not in bplayer and ' ' in bplayer):
                 bplayer = bplayer[:bplayer.index(' ')] + ',' + bplayer[bplayer.index(' ')+1:]
             
-            player_stats[get_color_player(wplayer, bplayer, chess.WHITE)] = np.zeros(NUM_VARS)
-            player_stats[get_color_player(wplayer, bplayer, chess.BLACK)] = np.zeros(NUM_VARS)
+            if (wplayer not in player_stats.keys()):
+                player_stats[get_color_player(wplayer, bplayer, chess.WHITE)] = np.zeros(NUM_VARS)
+                player_stats[get_color_player(wplayer, bplayer, chess.WHITE)] = np.zeros(NUM_VARS)
+            if (bplayer not in player_stats.keys()):
+                player_stats[get_color_player(wplayer, bplayer, chess.BLACK)] = np.zeros(NUM_VARS)
             
-            player_stats[wplayer][6] = len(list(game.mainline_moves()))//2
-            player_stats[bplayer][6] = len(list(game.mainline_moves()))//2
+            player_stats[wplayer][Vars_idx.NUM_GAME+1:] *= player_stats[wplayer][Vars_idx.NUM_GAME]
+            player_stats[bplayer][Vars_idx.NUM_GAME+1:] *= player_stats[bplayer][Vars_idx.NUM_GAME]
+            player_stats[wplayer][Vars_idx.NUM_GAME] += 1
+            player_stats[bplayer][Vars_idx.NUM_GAME] += 1
+            player_stats[wplayer][Vars_idx.NUM_GAME+1] += len(list(game.mainline_moves()))//2
+            player_stats[bplayer][Vars_idx.NUM_GAME+1] += len(list(game.mainline_moves()))//2
+            
             for move in game.mainline_moves():
                 curr_color = board.color_at(move.from_square)
                 move_stats, new_king_square = get_move_data(move)
 
-                player_stats[get_color_player(wplayer, bplayer, curr_color)] += move_stats
+                player_stats[get_color_player(wplayer, bplayer, curr_color)][Vars_idx.NUM_GAME+1:] += move_stats[Vars_idx.NUM_GAME+1:]
                 if (new_king_square >= 0):
                     if (curr_color == chess.WHITE):
                         wking_square = move.from_square
@@ -132,15 +151,16 @@ if __name__ == "__main__":
                         bking_square = move.from_square 
                 
                 board.push(move)
-                
+            
+            player_stats[wplayer][Vars_idx.NUM_GAME+1:] /= player_stats[wplayer][Vars_idx.NUM_GAME]
+            player_stats[bplayer][Vars_idx.NUM_GAME+1:] /= player_stats[bplayer][Vars_idx.NUM_GAME]            
             game = chess.pgn.read_game(pgn)
-            print({name: int(player_stats[name][-1]) for name in player_stats.keys()})
-            print(len(player_stats.keys()))
             game_idx += 1
             
     with open(f"../training/training_data/player_data_{sys.argv[1]}-{sys.argv[2]}.csv", 'w', newline='') as csvfile:
         player_writer = csv.writer(csvfile, delimiter=',', 
                                    quotechar=' ', quoting=csv.QUOTE_MINIMAL)
+        ### Need to write csv headers before stats here:
         for player in player_stats.keys():
             player_writer.writerow([player] + player_stats[player].tolist())
 
