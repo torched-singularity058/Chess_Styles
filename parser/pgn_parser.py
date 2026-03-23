@@ -49,8 +49,8 @@ def create_squares_vector(init_square: chess.Square, final_square: chess.Square)
     """
     vec_x, vec_y = 0, 0
     if (type(init_square) == chess.Square and type(final_square) == chess.Square):
-        vec_x = final_square.square_file - init_square.square_file
-        vec_y = final_square.square_rank - init_square.square_rank
+        vec_x = chess.square_file(final_square) - chess.square_file(init_square)
+        vec_y = chess.square_rank(final_square) - chess.square_rank(init_square)
     else:
         raise TypeError("Inputs are not valid chess.Square types")
     
@@ -67,43 +67,49 @@ def get_color_player(wplayer: str, bplayer: str, color: chess.Color):
         return wplayer
     return bplayer
 
-def get_move_data(move: chess.Move):
+def get_move_data(board: chess.Board, move: chess.Move, king_square: chess.Square):
     """
-    Gets all variables for move data from a given move (Prototype 1)
+    Gets all hand-picked variables/features for move data from a given move 
+    (Prototype 1)
+    Args: 
+        - board (chess.Board): current chess board method being used
+        - move (chess.Move): current chess move to analyze
+        - king_square (chess.Square): king position of the current move's opposite color
     Returns (npt.NDArray[int], chess.Square): data vector for the given move + new opponent king position
     """
+    move_stats = np.zeros(NUM_VARS)
     curr_piece = board.piece_at(move.from_square)
     curr_color = board.color_at(move.from_square)
 
-    # move -> variable checking
+    # move position checks (e.g. moves near king):
+    if (chess.square_distance(move.to_square, king_square) <= 3):
+        move_stats[Vars_idx.NEAR_KING] += 1
+    if (curr_color == chess.WHITE):
+        if (chess.square_rank(move.to_square) > 3):
+            if (curr_piece.piece_type == chess.PAWN):
+                move_stats[Vars_idx.PAWN_PASTHF] += 1
+            else:
+                move_stats[Vars_idx.PIECE_PASTHF] += 1
+    else:
+        if (chess.square_rank(move.to_square) < 4):
+            if (curr_piece.piece_type == chess.PAWN):
+                move_stats[Vars_idx.PAWN_PASTHF] += 1
+            else:
+                move_stats[Vars_idx.PIECE_PASTHF] += 1
 
     # directional checks (e.g. moves towards king):
     move_vec = create_squares_vector(move.from_square, move.to_square)
-    king_vec = None
+    king_vec = create_squares_vector(move.from_square, king_square)
     new_king_square = -1
-    if (curr_color == chess.WHITE):
-        king_vec = create_squares_vector(move.from_square, bking_square)
-    else:
-        king_vec = create_squares_vector(move.from_square, wking_square)
 
     if (king_vec[0] * move_vec[0] > 0):
-        player_stats[get_color_player(wplayer, bplayer, curr_color)][1] += 1
+        move_stats[Vars_idx.TO_KING] += 1
 
-    # king position update:
     if (curr_piece.piece_type == chess.KING):
-        if (curr_piece.color == chess.WHITE):
-            new_king_square = move.from_square
-        else:
-            new_king_square = move.from_square    
+        move_stats[Vars_idx.KING_MOVE] += 1
+        new_king_square = move.from_square    
     
     return move_stats, new_king_square
-
-def get_move_data(move: chess.Move):
-    """
-    Gets all variables for move data from a given move
-    Returns (npt.NDArray[int]): data vector for the given move
-    """
-    return np.zeros(NUM_VARS), -1
 
 if __name__ == "__main__":
     extract_pgns("./twic_datasets")
@@ -115,10 +121,10 @@ if __name__ == "__main__":
         pgn = open("./twic_datasets/twic16" + str(pgn_idx) + ".pgn")
         game = chess.pgn.read_game(pgn)
         game_idx = 0
-        while ((game != None) and (game_idx < 100)):
-            print(f"curr game idx: {game_idx}")
+        while ((game != None) and (game_idx < 1000)):
+            #print(f"curr game idx: {game_idx}")
             board = game.board()
-            wking_square, bking_square = chess.E1, chess.E8
+            king_squares: dict[chess.Color, chess.Square] = {chess.WHITE: chess.E1, chess.BLACK: chess.E8}
             wplayer = game.headers["White"]
             bplayer = game.headers["Black"]
             if (',' not in wplayer and ' ' in wplayer):
@@ -132,35 +138,40 @@ if __name__ == "__main__":
             if (bplayer not in player_stats.keys()):
                 player_stats[get_color_player(wplayer, bplayer, chess.BLACK)] = np.zeros(NUM_VARS)
             
-            player_stats[wplayer][Vars_idx.NUM_GAME+1:] *= player_stats[wplayer][Vars_idx.NUM_GAME]
-            player_stats[bplayer][Vars_idx.NUM_GAME+1:] *= player_stats[bplayer][Vars_idx.NUM_GAME]
+            player_stats[wplayer][Vars_idx.NUM_GAME.value+1:] *= player_stats[wplayer][Vars_idx.NUM_GAME]
+            player_stats[bplayer][Vars_idx.NUM_GAME.value+1:] *= player_stats[bplayer][Vars_idx.NUM_GAME]
             player_stats[wplayer][Vars_idx.NUM_GAME] += 1
             player_stats[bplayer][Vars_idx.NUM_GAME] += 1
-            player_stats[wplayer][Vars_idx.NUM_GAME+1] += len(list(game.mainline_moves()))//2
-            player_stats[bplayer][Vars_idx.NUM_GAME+1] += len(list(game.mainline_moves()))//2
+            player_stats[wplayer][Vars_idx.NUM_GAME.value+1] += len(list(game.mainline_moves()))//2
+            player_stats[bplayer][Vars_idx.NUM_GAME.value+1] += len(list(game.mainline_moves()))//2
             
             for move in game.mainline_moves():
+                #print(king_squares)
                 curr_color = board.color_at(move.from_square)
-                move_stats, new_king_square = get_move_data(move)
+                move_stats, new_king_square = get_move_data(board, move, king_squares[not curr_color])
 
-                player_stats[get_color_player(wplayer, bplayer, curr_color)][Vars_idx.NUM_GAME+1:] += move_stats[Vars_idx.NUM_GAME+1:]
+                player_stats[get_color_player(wplayer, bplayer, curr_color)][Vars_idx.NUM_GAME.value+2:] += \
+                            move_stats[Vars_idx.NUM_GAME.value+2:]
                 if (new_king_square >= 0):
-                    if (curr_color == chess.WHITE):
-                        wking_square = move.from_square
-                    else:
-                        bking_square = move.from_square 
+                    king_squares[not curr_color] = new_king_square
                 
                 board.push(move)
             
-            player_stats[wplayer][Vars_idx.NUM_GAME+1:] /= player_stats[wplayer][Vars_idx.NUM_GAME]
-            player_stats[bplayer][Vars_idx.NUM_GAME+1:] /= player_stats[bplayer][Vars_idx.NUM_GAME]            
+            player_stats[wplayer][Vars_idx.NUM_GAME.value+1:] /= player_stats[wplayer][Vars_idx.NUM_GAME]
+            player_stats[bplayer][Vars_idx.NUM_GAME.value+1:] /= player_stats[bplayer][Vars_idx.NUM_GAME]            
             game = chess.pgn.read_game(pgn)
             game_idx += 1
+    print(f"Finished generating feature data")
             
     with open(f"../training/training_data/player_data_{sys.argv[1]}-{sys.argv[2]}.csv", 'w', newline='') as csvfile:
         player_writer = csv.writer(csvfile, delimiter=',', 
                                    quotechar=' ', quoting=csv.QUOTE_MINIMAL)
         ### Need to write csv headers before stats here:
+        player_writer.writerow(["surname", "name", "# Games", "Avg. Game Length (Moves)", 
+                                "Avg. Moves in King's Direction", "Avg. Moves around King (<=3 squares away)",
+                                "Avg. Piece moves past half", "Avg. Pawn moves past half",
+                                "# Pieces by EOG", "# Pawns by EOG", "King Moves"])
         for player in player_stats.keys():
             player_writer.writerow([player] + player_stats[player].tolist())
+    print(f"Finished writing to csv: {str(csvfile)}")
 
