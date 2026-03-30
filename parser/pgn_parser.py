@@ -1,7 +1,7 @@
 # Purpose of this file: implement functions to unzip & parse pgn datasets
 #   --> obtain a new dataset with manually-selected variables
 
-import sys
+import sys, os
 import zipfile
 from zipfile import ZipFile
 import csv
@@ -82,8 +82,12 @@ def get_move_data(board: chess.Board, move: chess.Move, king_square: chess.Squar
     curr_piece = board.piece_at(move.from_square)
     curr_color = board.color_at(move.from_square)
 
+    if (curr_piece == None):
+        print(move)
+        print(board.board_fen())
+
     # move position checks (e.g. moves near king):
-    if (chess.square_distance(move.to_square, king_square) <= 3):
+    if (chess.square_distance(move.to_square, king_square) <= 2):
         move_stats[Vars_idx.NEAR_KING] += 1
     if (curr_color == chess.WHITE):
         if (chess.square_rank(move.to_square) > 3):
@@ -113,74 +117,103 @@ def get_move_data(board: chess.Board, move: chess.Move, king_square: chess.Squar
     
     return move_stats, new_king_square
 
+def write_to_csv(csv_path, curr_player_stats):
+    """
+    Writes current dataset to the csv; used to handle interrupts & failures
+    """
+    with open(csv_path, 'w', newline='') as csvfile:
+        player_writer = csv.writer(csvfile, delimiter=',', 
+                                   quotechar=' ', quoting=csv.QUOTE_MINIMAL)
+        player_writer.writerow(["surname", "name", "# Games", "Avg. Game Length (Moves)", 
+                                "Avg. Moves in King's Direction", "Avg. Moves around King (<=2 squares away)",
+                                "Avg. Piece moves past half", "Avg. Pawn moves past half",
+                                "# Pieces by EOG", "# Pawns by EOG", "King Moves"])
+        for player in curr_player_stats.keys():
+            player_writer.writerow([player] + curr_player_stats[player].tolist())
+        
+        csvfile.flush()
+        os.fsync(csvfile.fileno())
+
 if __name__ == "__main__":
     extract_pgns("./twic_datasets")
 
     player_stats: dict[npt.NDArray[np.int64]] = {}
     path_name = Path("./twic_datasets")
-    for pgn_idx in range(int(sys.argv[1]), int(sys.argv[2])+1):
+    start_pgn, end_pgn = int(sys.argv[1]), int(sys.argv[2])
+    csv_path = f"../training/training_data/player_data_{start_pgn}-{end_pgn}.csv"
+    for pgn_idx in range(start_pgn, end_pgn+1):
         print("curr pgn twic: ./twic_datasets/twic16" + str(pgn_idx) + ".pgn")
-        pgn = open("./twic_datasets/twic16" + str(pgn_idx) + ".pgn")
+        pgn = open("./twic_datasets/twic16" + str(pgn_idx) + ".pgn", encoding="utf-8", errors="replace")
         game = chess.pgn.read_game(pgn)
         game_idx = 0
-        while ((game != None) and (game_idx < 1000)):
-            #print(f"curr game idx: {game_idx}")
-            board = game.board()
-            king_squares: dict[chess.Color, chess.Square] = {chess.WHITE: chess.E1, chess.BLACK: chess.E8}
-            wplayer = game.headers["White"]
-            bplayer = game.headers["Black"]
-            if (',' not in wplayer and ' ' in wplayer):
-                wplayer = wplayer[:wplayer.index(' ')] + ',' + wplayer[wplayer.index(' ')+1:]
-            if (',' not in bplayer and ' ' in bplayer):
-                bplayer = bplayer[:bplayer.index(' ')] + ',' + bplayer[bplayer.index(' ')+1:]
-            
-            if (wplayer not in player_stats.keys()):
-                player_stats[get_color_player(wplayer, bplayer, chess.WHITE)] = np.zeros(NUM_VARS)
-                player_stats[get_color_player(wplayer, bplayer, chess.WHITE)] = np.zeros(NUM_VARS)
-            if (bplayer not in player_stats.keys()):
-                player_stats[get_color_player(wplayer, bplayer, chess.BLACK)] = np.zeros(NUM_VARS)
-            
-            player_stats[wplayer][Vars_idx.NUM_GAME.value+1:] *= player_stats[wplayer][Vars_idx.NUM_GAME]
-            player_stats[bplayer][Vars_idx.NUM_GAME.value+1:] *= player_stats[bplayer][Vars_idx.NUM_GAME]
-            player_stats[wplayer][Vars_idx.NUM_GAME] += 1
-            player_stats[bplayer][Vars_idx.NUM_GAME] += 1
-            player_stats[wplayer][Vars_idx.LEN_GAME] += len(list(game.mainline_moves()))//2
-            player_stats[bplayer][Vars_idx.LEN_GAME] += len(list(game.mainline_moves()))//2
-            
-            for move in game.mainline_moves():
-                #print(king_squares)
-                curr_color = board.color_at(move.from_square)
-                move_stats, new_king_square = get_move_data(board, move, king_squares[not curr_color])
-
-                player_stats[get_color_player(wplayer, bplayer, curr_color)][Vars_idx.NUM_GAME.value+2:] += \
-                            move_stats[Vars_idx.NUM_GAME.value+2:]
-                if (new_king_square >= 0):
-                    king_squares[not curr_color] = new_king_square
+        while (game != None):
+            try:
+                #print(f"curr game idx: {game_idx}")
+                board = game.board()
+                king_squares: dict[chess.Color, chess.Square] = {chess.WHITE: chess.E1, chess.BLACK: chess.E8}
+                wplayer = game.headers["White"]
+                bplayer = game.headers["Black"]
+                if (',' not in wplayer and ' ' in wplayer):
+                    wplayer = wplayer[:wplayer.index(' ')] + ',' + wplayer[wplayer.index(' ')+1:]
+                if (',' not in bplayer and ' ' in bplayer):
+                    bplayer = bplayer[:bplayer.index(' ')] + ',' + bplayer[bplayer.index(' ')+1:]
                 
-                board.push(move)
-            
-            num_final_pieces, num_final_pawns = 0, 0
-            for char in board.board_fen():
-                if (char.isalpha()):
-                    if (char == 'p' or char == 'P'):
-                        num_final_pawns += 1
-                    else:
-                        num_final_pieces += 1
-            player_stats[wplayer][Vars_idx.NUMPIECE_EOG] += num_final_pieces
-            player_stats[wplayer][Vars_idx.NUMPAWN_EOG] += num_final_pawns
-            player_stats[bplayer][Vars_idx.NUMPIECE_EOG] += num_final_pieces
-            player_stats[bplayer][Vars_idx.NUMPAWN_EOG] += num_final_pawns
-            
-            player_stats[wplayer][Vars_idx.NUM_GAME.value+1:] //= float(player_stats[wplayer][Vars_idx.NUM_GAME])
-            player_stats[bplayer][Vars_idx.NUM_GAME.value+1:] //= float(player_stats[bplayer][Vars_idx.NUM_GAME])    
-            game = chess.pgn.read_game(pgn)
-            game_idx += 1
+                if (wplayer not in player_stats.keys()):
+                    player_stats[get_color_player(wplayer, bplayer, chess.WHITE)] = np.zeros(NUM_VARS)
+                if (bplayer not in player_stats.keys()):
+                    player_stats[get_color_player(wplayer, bplayer, chess.BLACK)] = np.zeros(NUM_VARS)
+                
+                player_stats[wplayer][Vars_idx.NUM_GAME.value+1:] *= player_stats[wplayer][Vars_idx.NUM_GAME]
+                player_stats[bplayer][Vars_idx.NUM_GAME.value+1:] *= player_stats[bplayer][Vars_idx.NUM_GAME]
+                player_stats[wplayer][Vars_idx.NUM_GAME] += 1
+                player_stats[bplayer][Vars_idx.NUM_GAME] += 1
+                player_stats[wplayer][Vars_idx.LEN_GAME] += len(list(game.mainline_moves()))//2
+                player_stats[bplayer][Vars_idx.LEN_GAME] += len(list(game.mainline_moves()))//2
+                
+                for move in game.mainline_moves():
+                    #print(king_squares)
+                    curr_color = board.color_at(move.from_square)
+                    move_stats, new_king_square = get_move_data(board, move, king_squares[not curr_color])
+
+                    player_stats[get_color_player(wplayer, bplayer, curr_color)][Vars_idx.NUM_GAME.value+2:] += \
+                                move_stats[Vars_idx.NUM_GAME.value+2:]
+                    if (new_king_square >= 0):
+                        king_squares[not curr_color] = new_king_square
+                    
+                    board.push(move)
+                
+                num_final_pieces, num_final_pawns = 0, 0
+                for char in board.board_fen():
+                    if (char.isalpha()):
+                        if (char == 'p' or char == 'P'):
+                            num_final_pawns += 1
+                        else:
+                            num_final_pieces += 1
+                player_stats[wplayer][Vars_idx.NUMPIECE_EOG] += num_final_pieces
+                player_stats[wplayer][Vars_idx.NUMPAWN_EOG] += num_final_pawns
+                player_stats[bplayer][Vars_idx.NUMPIECE_EOG] += num_final_pieces
+                player_stats[bplayer][Vars_idx.NUMPAWN_EOG] += num_final_pawns
+                
+                player_stats[wplayer][Vars_idx.NUM_GAME.value+1:] /= float(player_stats[wplayer][Vars_idx.NUM_GAME])
+                player_stats[bplayer][Vars_idx.NUM_GAME.value+1:] /= float(player_stats[bplayer][Vars_idx.NUM_GAME])  
+
+                if (game_idx % 500 == 0):
+                    write_to_csv(csv_path, player_stats)
+
+                game = chess.pgn.read_game(pgn)
+                game_idx += 1
+            except KeyboardInterrupt:
+                write_to_csv(csv_path, player_stats)
+                print(f"Keyboard Interrupt, progress saved at: {game_idx//500}")
+            except Exception as err:
+                write_to_csv(csv_path, player_stats)
+                print(f"Error: {err}, progress saved at: {game_idx//500}")
+
     print(f"Finished generating feature data")
             
     with open(f"../training/training_data/player_data_{sys.argv[1]}-{sys.argv[2]}.csv", 'w', newline='') as csvfile:
         player_writer = csv.writer(csvfile, delimiter=',', 
                                    quotechar=' ', quoting=csv.QUOTE_MINIMAL)
-        ### Need to write csv headers before stats here:
         player_writer.writerow(["surname", "name", "# Games", "Avg. Game Length (Moves)", 
                                 "Avg. Moves in King's Direction", "Avg. Moves around King (<=3 squares away)",
                                 "Avg. Piece moves past half", "Avg. Pawn moves past half",
