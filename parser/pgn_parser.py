@@ -69,8 +69,9 @@ def get_color_player(wplayer: str, bplayer: str, color: chess.Color):
 
 def get_move_data(board: chess.Board, move: chess.Move, king_square: chess.Square):
     """
-    Gets all hand-picked variables/features for move data from a given move 
-    (Prototype 1)
+    Gets all hand-picked variables/features for move data from a given move,
+    except for # games, game length, or # pieces by end of game (EOG)
+    (Prototype 2)
     Args: 
         - board (chess.Board): current chess board method being used
         - move (chess.Move): current chess move to analyze
@@ -98,6 +99,7 @@ def get_move_data(board: chess.Board, move: chess.Move, king_square: chess.Squar
                 move_stats[Vars_idx.PIECE_PASTHF] += 1
 
     # directional checks (e.g. moves towards king):
+    #   Note: will need more rigorous toward-king check, e.g. horizontal & vertical moves
     move_vec = create_squares_vector(move.from_square, move.to_square)
     king_vec = create_squares_vector(move.from_square, king_square)
     new_king_square = -1
@@ -142,8 +144,8 @@ if __name__ == "__main__":
             player_stats[bplayer][Vars_idx.NUM_GAME.value+1:] *= player_stats[bplayer][Vars_idx.NUM_GAME]
             player_stats[wplayer][Vars_idx.NUM_GAME] += 1
             player_stats[bplayer][Vars_idx.NUM_GAME] += 1
-            player_stats[wplayer][Vars_idx.NUM_GAME.value+1] += len(list(game.mainline_moves()))//2
-            player_stats[bplayer][Vars_idx.NUM_GAME.value+1] += len(list(game.mainline_moves()))//2
+            player_stats[wplayer][Vars_idx.LEN_GAME] += len(list(game.mainline_moves()))//2
+            player_stats[bplayer][Vars_idx.LEN_GAME] += len(list(game.mainline_moves()))//2
             
             for move in game.mainline_moves():
                 #print(king_squares)
@@ -157,8 +159,20 @@ if __name__ == "__main__":
                 
                 board.push(move)
             
-            player_stats[wplayer][Vars_idx.NUM_GAME.value+1:] /= player_stats[wplayer][Vars_idx.NUM_GAME]
-            player_stats[bplayer][Vars_idx.NUM_GAME.value+1:] /= player_stats[bplayer][Vars_idx.NUM_GAME]            
+            num_final_pieces, num_final_pawns = 0, 0
+            for char in board.board_fen():
+                if (char.isalpha()):
+                    if (char == 'p' or char == 'P'):
+                        num_final_pawns += 1
+                    else:
+                        num_final_pieces += 1
+            player_stats[wplayer][Vars_idx.NUMPIECE_EOG] += num_final_pieces
+            player_stats[wplayer][Vars_idx.NUMPAWN_EOG] += num_final_pawns
+            player_stats[bplayer][Vars_idx.NUMPIECE_EOG] += num_final_pieces
+            player_stats[bplayer][Vars_idx.NUMPAWN_EOG] += num_final_pawns
+            
+            player_stats[wplayer][Vars_idx.NUM_GAME.value+1:] //= float(player_stats[wplayer][Vars_idx.NUM_GAME])
+            player_stats[bplayer][Vars_idx.NUM_GAME.value+1:] //= float(player_stats[bplayer][Vars_idx.NUM_GAME])    
             game = chess.pgn.read_game(pgn)
             game_idx += 1
     print(f"Finished generating feature data")
