@@ -12,10 +12,9 @@ import numpy.typing as npt
 from enum import IntEnum
 
 ### variable list (all averages):
-###     [#GAMES, moves near king, moves toward king, moves past half rank, amt pawns past half rank, 
-###      amt pieces left on board by eog, amt pawns left on board by eog, # king moves
-###      length of game]
-### Eventually: enum type for all the different variables
+###     [#GAMES, game length, moves near king, moves toward king, 
+###      piece moves past half rank, pawn moves past half rank, 
+###      #pieces left on board by eog, #pawns left on board by eog, # king moves]
 class Vars_idx(IntEnum):
     NUM_GAME = 0
     LEN_GAME = 1
@@ -85,21 +84,22 @@ def get_move_data(board: chess.Board, move: chess.Move, king_square: chess.Squar
     if (curr_piece == None):
         print(move)
         print(board.board_fen())
+        raise ValueError("Current Piece type must not be None")
 
     # move position checks (e.g. moves near king):
     if (chess.square_distance(move.to_square, king_square) <= 2):
         move_stats[Vars_idx.NEAR_KING] += 1
     if (curr_color == chess.WHITE):
-        if (chess.square_rank(move.to_square) > 3):
+        if (int(chess.square_rank(move.to_square)) > 3):
             if (curr_piece.piece_type == chess.PAWN):
                 move_stats[Vars_idx.PAWN_PASTHF] += 1
-            else:
+            elif (curr_piece.piece_type != chess.KING):
                 move_stats[Vars_idx.PIECE_PASTHF] += 1
     else:
-        if (chess.square_rank(move.to_square) < 4):
+        if (int(chess.square_rank(move.to_square)) < 4):
             if (curr_piece.piece_type == chess.PAWN):
                 move_stats[Vars_idx.PAWN_PASTHF] += 1
-            else:
+            elif (curr_piece.piece_type != chess.KING):
                 move_stats[Vars_idx.PIECE_PASTHF] += 1
 
     # directional checks (e.g. moves towards king):
@@ -148,7 +148,6 @@ if __name__ == "__main__":
         game_idx = 0
         while (game != None):
             try:
-                #print(f"curr game idx: {game_idx}")
                 board = game.board()
                 king_squares: dict[chess.Color, chess.Square] = {chess.WHITE: chess.E1, chess.BLACK: chess.E8}
                 wplayer = game.headers["White"]
@@ -171,7 +170,9 @@ if __name__ == "__main__":
                 player_stats[bplayer][Vars_idx.LEN_GAME] += len(list(game.mainline_moves()))//2
                 
                 for move in game.mainline_moves():
-                    #print(king_squares)
+                    if (move.uci() == "0000"):
+                        board.push(move)
+                        continue
                     curr_color = board.color_at(move.from_square)
                     move_stats, new_king_square = get_move_data(board, move, king_squares[not curr_color])
 
@@ -182,20 +183,19 @@ if __name__ == "__main__":
                     
                     board.push(move)
                 
-                num_final_pieces, num_final_pawns = 0, 0
-                for char in board.board_fen():
-                    if (char.isalpha()):
-                        if (char == 'p' or char == 'P'):
-                            num_final_pawns += 1
-                        else:
-                            num_final_pieces += 1
+                num_final_pieces = sum(len(board.pieces(piece, color))
+                                    for color in [chess.WHITE, chess.BLACK]
+                                    for piece in [chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN])
+                num_final_pawns = sum(len(board.pieces(piece, color))
+                                    for color in [chess.WHITE, chess.BLACK]
+                                    for piece in [chess.PAWN])
                 player_stats[wplayer][Vars_idx.NUMPIECE_EOG] += num_final_pieces
                 player_stats[wplayer][Vars_idx.NUMPAWN_EOG] += num_final_pawns
                 player_stats[bplayer][Vars_idx.NUMPIECE_EOG] += num_final_pieces
                 player_stats[bplayer][Vars_idx.NUMPAWN_EOG] += num_final_pawns
                 
                 player_stats[wplayer][Vars_idx.NUM_GAME.value+1:] /= float(player_stats[wplayer][Vars_idx.NUM_GAME])
-                player_stats[bplayer][Vars_idx.NUM_GAME.value+1:] /= float(player_stats[bplayer][Vars_idx.NUM_GAME])  
+                player_stats[bplayer][Vars_idx.NUM_GAME.value+1:] /= float(player_stats[bplayer][Vars_idx.NUM_GAME]) 
 
                 if (game_idx % 500 == 0):
                     write_to_csv(csv_path, player_stats)
@@ -204,10 +204,12 @@ if __name__ == "__main__":
                 game_idx += 1
             except KeyboardInterrupt:
                 write_to_csv(csv_path, player_stats)
-                print(f"Keyboard Interrupt, progress saved at: {game_idx//500}")
+                print(f"Keyboard Interrupt, progress saved at: {game_idx}")
+                raise
             except Exception as err:
                 write_to_csv(csv_path, player_stats)
-                print(f"Error: {err}, progress saved at: {game_idx//500}")
+                print(f"Error: {err}, progress saved at: {game_idx}")
+                raise
 
     print(f"Finished generating feature data")
             

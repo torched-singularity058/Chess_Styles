@@ -1,4 +1,7 @@
 # pgn_parser.py, get_move_data():
+
+The purpose of this script is to extract PGNs from TWIC ZIP files, parse the games in each .pgn file for features of the game that I've selected (detailed in pgn_parser.py), and send that data to a new .csv datafile for the style learning model.
+
 ## Dataset Setup note: 
 - Save twic datasets in the twic_datasets directory. They can still be in zip files if you prefer.
 - Save output datasets to the path: ../training/train_datasets
